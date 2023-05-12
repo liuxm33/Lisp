@@ -1,0 +1,36 @@
+My testing strategy:
+
+Whenever I finished a function, I did a unit test on it.
+Focusing on the inputs of the function and the expected output of it, I designed test cases based on each branch of the code.
+Containing some cases that are close to the boundary, these tests are a good way to ensure the accuracy of the data passed in and out of the functions.
+
+There were some functions that used recursion and they were not easy to test, so I used black-box testing to test them.
+Those test cases are in mytst.ncl file.
+Finally, I use gcov tool to generate my test coverage statistic report.
+
+For the exception testing, as soon as I finished a function, I designed test cases for each the exception testing, including out-of-bounds cases, invalid inputs, etc.
+But unfortunately I can only do it manually because of the exit(EXIT_FAILURE), so these testcases are not included in my testing.c file.
+After unit testing and function testing, my testing coverage is 87.23% :
+----------------------------
+File 'nuclei.c'
+Lines executed:87.23% of 282
+Creating 'nuclei.c.gcov'
+----------------------------
+You can find the details in the nuclei.gcov file.
+
+To prevent memory leaks, I adopted the strategy of creating a variable table and releasing the variables that are not in the table as soon as they were used.
+All heap block1 were freed:
+------------------------------------------------------------
+==25381== HEAP SUMMARY:
+==25381==     in use at exit: 0 bytes in 0 blocks
+==25381==   total heap usage: 76 allocs, 76 frees, 7,344 bytes allocated
+==25381== 
+==25381== All heap blocks were freed -- no leaks are possible
+==25381== 
+==25381== For lists of detected and suppressed errors, rerun with: -s
+==25381== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+--------------------------------------------------------------
+
+I learned that Googletest provides three macro definitions: EXPECT_DEATH, EXPECT_EXIT and EXPECT_THROW, which are good for testing that the corresponding functions do not interfere with the unit test workflow.
+In other words, those function assertions do not cause the unit test process to exit abnormally.
+Unfortunately, however, I had some difficulties in using them, so I could not complete a formal test with it.

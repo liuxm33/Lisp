@@ -1,0 +1,672 @@
+        -:    0:Source:nuclei.c
+        -:    0:Graph:nuclei.gcno
+        -:    0:Data:nuclei.gcda
+        -:    0:Runs:1
+        -:    1:#include "nuclei.h"
+        -:    2:
+        -:    3:#ifndef TEST
+        -:    4:int main(int argc, char* argv[])
+        -:    5:{
+        -:    6:    var varTable[26]; // for 26 letters from A-Z in alphabet.
+        -:    7:    memset(&varTable, 0, sizeof(var)*26);
+        -:    8:    char tokens[MAXTOK][MAXLEN] = {{0}};
+        -:    9:    int tokenLine[MAXTOK] = {0}; // for error reporting.
+        -:   10:
+        -:   11:    FILE* fp = readFile(argc, argv);
+        -:   12:    lexer(fp, tokens, tokenLine);
+        -:   13:    fclose(fp);
+        -:   14:    
+        -:   15:    int tokenPos = 0; //token position
+        -:   16:    //parsing programs
+        -:   17:    int pn = 1; //program number
+        -:   18:    int len = (int)strlen(*(tokens+tokenPos));
+        -:   19:    while(len != 0){
+        -:   20:        prog(tokens, &tokenPos, varTable);
+        -:   21:        printf("Program %i Parsed OK\n", pn);
+        -:   22:        pn++;
+        -:   23:        len = (int)strlen(*(tokens+tokenPos));
+        -:   24:    }
+        -:   25:    //free variables in varTable
+        -:   26:    #ifdef INTERP
+        -:   27:    for(int i = 0; i < 26; i++){
+        -:   28:        lisp_free(& varTable[i].data);
+        -:   29:    }
+        -:   30:    #endif
+        -:   31:    return 0;
+        -:   32:}
+        -:   33:#endif
+        -:   34:
+        1:   35:FILE* readFile(int argc, char* argv[])
+        -:   36:{
+        1:   37:    if(argc != 2){
+    #####:   38:        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+    #####:   39:        exit(EXIT_FAILURE);
+        -:   40:    }
+        1:   41:    FILE* fp = fopen(argv[1], "r");
+        1:   42:    if(!fp){
+    #####:   43:        fprintf(stderr, "Cannot read from %s\n", argv[1]);
+    #####:   44:        exit(EXIT_FAILURE);
+        -:   45:    }
+        1:   46:    return fp;
+        -:   47:}
+        -:   48:
+        1:   49:void lexer(FILE* fp, char tokens[MAXTOK][MAXLEN], int tokenLine[MAXTOK])
+        -:   50:{
+        1:   51:    int tokenPos = 0;
+        1:   52:    int tokenLetter = 0;
+        -:   53:    int line = 1;
+        -:   54:    char tmpStr[MAXLEN];
+        -:   55:
+       56:   56:    while(fgets(tmpStr, MAXLEN, fp)){
+       54:   57:        int tmpStrPos = 0; 
+       54:   58:        _lexerSkip(tmpStr, &tmpStrPos);
+        -:   59:
+       54:   60:        int len = (int)strlen(tmpStr);
+      533:   61:        while(tmpStrPos < len){    
+      479:   62:            if(tmpStr[tmpStrPos] == '\''){
+       31:   63:                _lexerQuote(tmpStr, &tmpStrPos, tokens, &tokenPos, &tokenLetter, '\'');
+       31:   64:                tokenLine[tokenPos-1] = line;
+        -:   65:            }
+      448:   66:            else if(tmpStr[tmpStrPos] == '\"'){
+        4:   67:                _lexerQuote(tmpStr, &tmpStrPos, tokens, &tokenPos, &tokenLetter, '\"');
+        4:   68:                tokenLine[tokenPos-1] = line;
+        -:   69:            }
+      444:   70:            else if(tmpStr[tmpStrPos] == '(' || tmpStr[tmpStrPos] == ')'){
+        -:   71:                _lexerBrace(tmpStr, &tmpStrPos, tokens, &tokenPos, &tokenLetter);
+      174:   72:                tokenLine[tokenPos-1] = line;
+        -:   73:            }
+      270:   74:            else if(tmpStr[tmpStrPos] == SPACE || tmpStr[tmpStrPos] == '\n'){
+      142:   75:                _lexerSkip(tmpStr, &tmpStrPos);
+        -:   76:            }
+      128:   77:            else if(tmpStr[tmpStrPos] == '#'){
+        6:   78:                tmpStrPos = len;
+        -:   79:            }
+        -:   80:            else{
+      122:   81:                _lexerWrds(tmpStr, &tmpStrPos, tokens, &tokenPos, &tokenLetter);
+      122:   82:                tokenLine[tokenPos-1] = line;
+        -:   83:            }
+        -:   84:        }
+       54:   85:        line ++;
+        -:   86:    }
+        1:   87:}
+        -:   88:
+        -:   89:/*****************************************************************/
+        -:   90:/*                 Auxiliary Functions of Lexer                  */
+        -:   91:/*****************************************************************/
+        -:   92:
+      123:   93:void _lexerWrds(char tmpStr[MAXLEN], int* tmpStrPos, char tokens[MAXTOK][MAXLEN], int* tokenPos, int* tokenLetter)
+        -:   94:{
+      123:   95:    int len = (int)strlen(tmpStr);
+      339:   96:    while(*tmpStrPos < len){
+      339:   97:        tokens[*tokenPos][*tokenLetter] = tmpStr[*tmpStrPos];
+      339:   98:        NEXT(*tmpStrPos);
+      339:   99:        NEXT(*tokenLetter);
+      339:  100:        if(tmpStr[*tmpStrPos] == SPACE || tmpStr[*tmpStrPos] == '\n' \
+      255:  101:           || tmpStr[*tmpStrPos] == '(' || tmpStr[*tmpStrPos] == ')' \
+      216:  102:           || tmpStr[*tmpStrPos] == '\''){
+      123:  103:            tokens[*tokenPos][*tokenLetter] = '\0';
+        -:  104:            _nextToken(tokenPos, tokenLetter);
+      123:  105:            return;
+        -:  106:        }
+        -:  107:    }
+        -:  108:}
+        -:  109:
+        1:  110:void _lexerBrace(char tmpStr[MAXLEN], int* tmpStrPos, char tokens[MAXTOK][MAXLEN], int* tokenPos, int* tokenLetter)
+        -:  111:{
+      175:  112:        tokens[*tokenPos][*tokenLetter] = tmpStr[*tmpStrPos];
+      175:  113:        tokens[*tokenPos][*tokenLetter + 1] = '\0';
+      175:  114:        NEXT(*tmpStrPos);
+        -:  115:        _nextToken(tokenPos, tokenLetter);
+        1:  116:}
+        -:  117:
+        -:  118:// Find a pair of quota, until the end of the line.
+       37:  119:void _lexerQuote(char tmpStr[MAXLEN], int* tmpStrPos, char tokens[MAXTOK][MAXLEN], int* tokenPos, int* tokenLetter, char quotaType)
+        -:  120:{
+       37:  121:    tokens[*tokenPos][*tokenLetter] = tmpStr[*tmpStrPos];
+       37:  122:    NEXT(*tokenLetter);
+       37:  123:    NEXT(*tmpStrPos);
+        -:  124:
+       37:  125:    int len = (int)strlen(tmpStr);
+      161:  126:    while(*tmpStrPos < len){
+      161:  127:        if(tmpStr[*tmpStrPos] == '\n'){
+        1:  128:            tokens[*tokenPos][*tokenLetter] = '\0'; //Didn't find another quota. then next line.
+        1:  129:            NEXT(*tmpStrPos);
+        -:  130:            _nextToken(tokenPos, tokenLetter);
+        1:  131:            return; // This token would be an invalid one.
+        -:  132:        }
+        -:  133:
+      160:  134:        tokens[*tokenPos][*tokenLetter] = tmpStr[*tmpStrPos];
+        -:  135:
+      160:  136:        if(tmpStr[*tmpStrPos] == quotaType){ //Find another quota.
+       36:  137:            tokens[*tokenPos][*tokenLetter+1] = '\0';
+       36:  138:            NEXT(*tmpStrPos);
+        -:  139:            _nextToken(tokenPos, tokenLetter);
+       36:  140:            return;
+        -:  141:        }
+      124:  142:        NEXT(*tokenLetter);
+      124:  143:        NEXT(*tmpStrPos);
+        -:  144:    }
+        -:  145:}
+        -:  146:
+        1:  147:void _nextToken(int* tokenPos, int* tokenLetter)
+        -:  148:{
+      336:  149:    *tokenLetter = 0;
+      334:  150:    NEXT(*tokenPos);
+        1:  151:}
+        -:  152:
+        -:  153://skip space and newline character
+      198:  154:void _lexerSkip(char* tmpStr, int* tmpStrPos) 
+        -:  155:{
+      198:  156:    int len = (int)strlen(tmpStr);
+      542:  157:    while(*tmpStrPos < len && \
+      493:  158:         (tmpStr[*tmpStrPos] == SPACE || tmpStr[*tmpStrPos] == '\n')){
+      344:  159:        NEXT(*tmpStrPos);
+        -:  160:    }
+      198:  161:}
+        -:  162:
+        -:  163:/*****************************************************************/
+        -:  164:/*                      Terminal Functions                       */
+        -:  165:/*****************************************************************/
+        -:  166:
+    #####:  167:void _bdcheck(int* tokenPos)
+        -:  168:{
+    #####:  169:    if(*tokenPos >= MAXTOK -1){ // -1 is for NEXT(*tokenPos)
+    #####:  170:        on_error("The program is too long\n");
+        -:  171:    }
+    #####:  172:}
+        -:  173:
+      780:  174:bool isKeyword(char tokens[MAXTOK][MAXLEN], int* tokenPos, const char* keywordName)
+        -:  175:{
+        -:  176:    _bdcheck(tokenPos);
+      780:  177:    if(strcmp(*(tokens + *tokenPos), keywordName) == 0){
+      380:  178:        NEXT(*tokenPos);
+      380:  179:        return true;
+        -:  180:    }
+        -:  181:    return false;
+        -:  182:}
+        -:  183:
+      157:  184:bool isVar(char tokens[MAXTOK][MAXLEN], int* tokenPos)
+        -:  185:{
+        -:  186:    _bdcheck(tokenPos);
+      157:  187:    int len = (int)strlen(*(tokens + *tokenPos));
+      157:  188:    if(len == 1){ //letter A-Z
+       88:  189:        if(isupper(tokens[*tokenPos][0])){
+       75:  190:            NEXT(*tokenPos);
+       75:  191:            return true;
+        -:  192:        }
+        -:  193:    }
+        -:  194:    return false;
+        -:  195:}
+        -:  196:
+       82:  197:bool isLiteral(char tokens[MAXTOK][MAXLEN], int* tokenPos) 
+        -:  198:{ 
+        -:  199:    _bdcheck(tokenPos);
+       82:  200:    int len = (int)strlen(*(tokens + *tokenPos));
+       82:  201:    if(tokens[*tokenPos][0] == '\''){ //the first quote
+      221:  202:        for(int n = 1; n < len ; n++){
+      220:  203:            if(tokens[*tokenPos][n] == '\''){ //the second quote
+       64:  204:                NEXT(*tokenPos);
+       64:  205:                return true;
+        -:  206:            }
+        -:  207:        }
+        -:  208:        
+        -:  209:    }
+        -:  210:    return false;
+        -:  211:}
+        -:  212:
+       25:  213:bool isString(char tokens[MAXTOK][MAXLEN], int* tokenPos) 
+        -:  214:{
+        -:  215:    _bdcheck(tokenPos);
+       25:  216:    int len = (int)strlen(*(tokens + *tokenPos));
+       25:  217:    if(tokens[*tokenPos][0] == '\"'){ //the first quote
+       46:  218:        for(int n = 1; n < len ; n++){
+       45:  219:            if(tokens[*tokenPos][n] == '\"'){ //the second quote
+        6:  220:                NEXT(*tokenPos);
+        6:  221:                return true;
+        -:  222:            }
+        -:  223:        }
+        -:  224:    }
+        -:  225:    return false;
+        -:  226:}
+        -:  227:
+        -:  228:/*****************************************************************/
+        -:  229:/*               Auxiliary Functions of Interpreter              */
+        -:  230:/*****************************************************************/
+        -:  231:
+       90:  232:void _undeclared_check(char tokens[MAXTOK][MAXLEN], int* tokenPos, var tmpVar)
+        -:  233:{
+       90:  234:   if(tmpVar.state != exist && tmpVar.srce == frmVar){ 
+    #####:  235:        fprintf(stderr, "Use of undeclared identifier '%c'\n", tokens[*tokenPos-1][0]);
+    #####:  236:        exit(EXIT_FAILURE);
+        -:  237:    }
+       90:  238:}
+        -:  239:
+    #####:  240:void _tmpVar_free(var* tmpVar)
+        -:  241:{
+     146*:  242:    if(tmpVar->srce == new){
+     151*:  243:        lisp_free(&tmpVar->data);
+        -:  244:    }
+    #####:  245:}
+        -:  246:
+       11:  247:void _skipStatmts(char tokens[MAXTOK][MAXLEN], int* tokenPos)
+        -:  248:{
+        -:  249:    int brackCnt = 1; 
+        -:  250:    do{
+       90:  251:        if(isKeyword(tokens, tokenPos, "(")){
+       18:  252:            brackCnt ++;     
+        -:  253:        }
+       72:  254:        else if(isKeyword(tokens, tokenPos, ")")){
+       29:  255:            brackCnt --;
+        -:  256:        }else{
+       43:  257:            NEXT(*tokenPos);
+        -:  258:        }
+       90:  259:    }while(brackCnt != 0); 
+       11:  260:}
+        -:  261:
+    #####:  262:int _getLine(int* tokenPos, int tokenLine[MAXTOK])
+        -:  263:{
+    #####:  264:    return tokenLine[*tokenPos];
+        -:  265:}
+        -:  266:
+        -:  267:/*****************************************************************/
+        -:  268:/*                    Nonterminal Functions                      */
+        -:  269:/*****************************************************************/
+        -:  270:
+      122:  271:var list(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable)
+        -:  272:{
+        -:  273:    var tmpVar; //store return value of list function.
+        -:  274:    memset(&tmpVar, 0, sizeof(var));
+        -:  275:
+      122:  276:    if(isVar(tokens, tokenPos)){
+        -:  277:        #ifdef INTERP
+        -:  278:        // Copy the value in the variable table.
+       45:  279:        tmpVar.srce = frmVar;
+        -:  280:        // One token position back to get the variable name.
+       45:  281:        tmpVar.state = varTable[tokens[*tokenPos-1][0]-'A'].state; 
+       45:  282:        tmpVar.data = varTable[tokens[*tokenPos-1][0]-'A'].data; 
+        -:  283:        #endif
+       45:  284:        return tmpVar;
+        -:  285:    }
+       77:  286:    else if(isLiteral(tokens, tokenPos)){
+        -:  287:        #ifdef INTERP
+        -:  288:        char tmpStr[MAXLEN];
+       62:  289:        strcpy(tmpStr, *(tokens + *tokenPos -1)); // One token position back to get the literal.
+        -:  290:
+       62:  291:        int len = (int)strlen(tmpStr);
+       62:  292:        tmpStr[len - 1] = '\0'; //take away the last quote.
+       62:  293:        tmpVar.data = lisp_fromstring(tmpStr+1);//take away the first quote.
+        -:  294:        #endif
+       62:  295:        return tmpVar;
+        -:  296:    }
+       15:  297:    else if(strcmp(*(tokens + *tokenPos), "NIL") == 0 || strcmp(*(tokens + *tokenPos), "NULL") == 0){
+        3:  298:        NEXT(*tokenPos); //No terminal function, so we need to move the token position manually.
+        -:  299:        #ifdef INTERP
+        -:  300:        //tmpVar.srce = new; //NULL is a special lisp.
+        3:  301:        tmpVar.data = NULL;
+        -:  302:        #endif
+        3:  303:        return tmpVar;
+        -:  304:    }
+       12:  305:    else if(isKeyword(tokens, tokenPos, "(")){
+       12:  306:        retFunc(tokens, tokenPos, &tmpVar, varTable);
+       12:  307:        if( ! isKeyword(tokens, tokenPos, ")")){
+    #####:  308:            on_error("expected ')' of your retFunc function");
+        -:  309:        }
+       12:  310:        return tmpVar;
+        -:  311:    }
+        -:  312:    else{
+    #####:  313:        fprintf(stderr, "Not a valid LIST\n");
+    #####:  314:        exit(EXIT_FAILURE);
+        -:  315:    }
+        -:  316:} 
+        -:  317:
+        -:  318:/************************** IO Functions *************************/
+        -:  319:// <SET> ::= "SET" <VAR> <LIST>
+       64:  320:bool setFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable)
+        -:  321:{
+       64:  322:    if(isKeyword(tokens, tokenPos, "SET")){ // SET
+       28:  323:        if(isVar(tokens, tokenPos)){ // <VAR>
+        -:  324:            #ifdef INTERP
+        -:  325:            // One token position back to get the variable name.
+       28:  326:            int varIndex = tokens[*tokenPos-1][0]-'A';
+        -:  327:            // <LIST>  
+       28:  328:            var tmpVar = list(tokens, tokenPos, varTable);   
+       28:  329:            varTable[varIndex].state = exist; 
+        -:  330:            //Free the value that was here because of the posibility of redefinition
+       28:  331:            lisp_free(&varTable[varIndex].data);
+       28:  332:            varTable[varIndex].data = lisp_copy(tmpVar.data);
+       28:  333:            varTable[varIndex].srce = tmpVar.srce;
+        -:  334:            //free tmpVar because we have deep copied the value.
+        -:  335:            _tmpVar_free(&tmpVar); 
+        -:  336:            #else
+        -:  337:            list(tokens, tokenPos, varTable); 
+        -:  338:            #endif
+        -:  339:            return true;
+        -:  340:        }else{
+    #####:  341:            on_error("expected a variable name after SET");
+        -:  342:        }
+        -:  343:    }
+        -:  344:    return false;
+        -:  345:}
+        -:  346://<PRINT> ::= "PRINT" <LIST> | "PRINT" <STRING>
+       36:  347:bool printFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable)
+        -:  348:{
+       36:  349:    if(isKeyword(tokens, tokenPos, "PRINT")){ // PRINT
+       20:  350:        if(isString(tokens, tokenPos)){ // <STRING>
+        -:  351:            #ifdef INTERP
+        -:  352:            char tmpStr[MAXLEN];
+        3:  353:            strcpy(tmpStr, *(tokens + *tokenPos - 1));
+        3:  354:            int len = strlen(tmpStr);
+        -:  355:            //take away the last quote.
+        3:  356:            tmpStr[len - 1] = '\0'; 
+        -:  357:            printf("%s\n", tmpStr+1); //take away the first quote. print out.
+        -:  358:            #endif
+        -:  359:            return true;
+        -:  360:        }
+        -:  361:        else{
+        -:  362:            #ifdef INTERP
+       17:  363:            var tmpVar = list(tokens, tokenPos, varTable); // <LIST>
+        -:  364:            char tmpStr[MAXLEN];
+       17:  365:            _undeclared_check(tokens, tokenPos, tmpVar);
+       17:  366:            lisp_tostring(tmpVar.data, tmpStr);
+        -:  367:            printf("%s\n", tmpStr); //print out
+        -:  368:            _tmpVar_free(&tmpVar);
+        -:  369:            #else
+        -:  370:            list(tokens, tokenPos, varTable);
+        -:  371:            #endif
+        -:  372:            return true;
+        -:  373:        }
+        -:  374:    }
+        -:  375:    return false;
+        -:  376:}
+        -:  377:
+        -:  378:/************************** RET Functions *************************/
+       28:  379:bool retFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* rstVar, var* varTable)
+        -:  380:{
+       50:  381:    if(listFunc(tokens, tokenPos, rstVar, varTable) || \
+       35:  382:       intFunc(tokens, tokenPos, rstVar,varTable) || boolFunc(tokens, tokenPos, rstVar,varTable)){
+       15:  383:        return true; 
+        -:  384:    }
+        -:  385:    return false;
+        -:  386:}
+        -:  387:
+       32:  388:bool listFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* rstVar, var* varTable)
+        -:  389:{
+       32:  390:    if(isKeyword(tokens, tokenPos, "CAR")){
+        -:  391:        #ifdef INTERP
+        3:  392:        var tmpVar = list(tokens, tokenPos, varTable);
+        3:  393:        _undeclared_check(tokens, tokenPos, tmpVar);
+        3:  394:        rstVar->data = lisp_copy(lisp_car(tmpVar.data));//deep copy
+        -:  395:        _tmpVar_free(&tmpVar);
+        -:  396:        #else
+        -:  397:        list(tokens, tokenPos, varTable);
+        -:  398:        UNUSED_VARIABLE(rstVar);
+        -:  399:        #endif
+        -:  400:        return true;
+        -:  401:    }
+       29:  402:    else if(isKeyword(tokens, tokenPos, "CDR")){
+        -:  403:        #ifdef INTERP
+        3:  404:        var tmpVar = list(tokens, tokenPos, varTable);
+        3:  405:        _undeclared_check(tokens, tokenPos, tmpVar);
+        3:  406:        rstVar->data = lisp_copy(lisp_cdr(tmpVar.data));
+        -:  407:        _tmpVar_free(&tmpVar);
+        -:  408:        #else
+        -:  409:        list(tokens, tokenPos, varTable);
+        -:  410:        #endif
+        -:  411:        return true;
+        -:  412:    }
+       26:  413:    else if(isKeyword(tokens, tokenPos, "CONS")){
+        -:  414:        #ifdef INTERP
+        4:  415:        var tmpVar1 = list(tokens, tokenPos, varTable);
+        4:  416:        _undeclared_check(tokens, tokenPos, tmpVar1);
+        4:  417:        var tmpVar2 = list(tokens, tokenPos, varTable);
+        4:  418:        _undeclared_check(tokens, tokenPos, tmpVar2);
+        -:  419:
+        4:  420:        rstVar->data = (lisp*)ncalloc(1, sizeof(lisp));
+        4:  421:        rstVar->data->car = lisp_copy(tmpVar1.data);
+        4:  422:        rstVar->data->cdr = lisp_copy(tmpVar2.data);
+        -:  423:        _tmpVar_free(&tmpVar1);
+        -:  424:        _tmpVar_free(&tmpVar2); 
+        -:  425:        
+        -:  426:        #else
+        -:  427:        list(tokens, tokenPos, varTable);
+        -:  428:        list(tokens, tokenPos, varTable);
+        -:  429:        #endif
+        -:  430:        return true;
+        -:  431:    }
+        -:  432:    return false;
+        -:  433:}
+        -:  434:
+        -:  435://return an atom with value of the integer;
+       24:  436:bool intFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos,var* rstVar, var* varTable) 
+        -:  437:{
+       24:  438:    if(isKeyword(tokens, tokenPos, "PLUS")){
+        -:  439:        #ifdef INTERP
+        8:  440:        var tmpVar1 = list(tokens, tokenPos, varTable);
+        8:  441:        _undeclared_check(tokens, tokenPos, tmpVar1);
+        8:  442:        var tmpVar2 = list(tokens, tokenPos, varTable);
+        8:  443:        _undeclared_check(tokens, tokenPos, tmpVar2);
+        8:  444:        if(lisp_isatomic(tmpVar1.data) && lisp_isatomic(tmpVar2.data)){
+        8:  445:            rstVar->data = lisp_atom(lisp_getval(tmpVar1.data) + lisp_getval(tmpVar2.data)); //malloc
+        -:  446:            _tmpVar_free(&tmpVar1);
+        -:  447:            _tmpVar_free(&tmpVar2);
+        -:  448:        }else{
+    #####:  449:            on_error("PLUS function: needed exe atom !\n");
+        -:  450:        }
+        -:  451:        #else
+        -:  452:        list(tokens, tokenPos, varTable);
+        -:  453:        list(tokens, tokenPos, varTable);
+        -:  454:        #endif
+        -:  455:        return true;
+        -:  456:    }
+       16:  457:    else if(isKeyword(tokens, tokenPos, "LENGTH")){
+        -:  458:        #ifdef INTERP
+        3:  459:        var tmpVar = list(tokens, tokenPos, varTable);
+        3:  460:        _undeclared_check(tokens, tokenPos, tmpVar);
+        3:  461:        rstVar->data = lisp_atom(lisp_length(tmpVar.data)); 
+        -:  462:
+        -:  463:        _tmpVar_free(&tmpVar);
+        -:  464:        #else
+        -:  465:        list(tokens, tokenPos, varTable);
+        -:  466:        UNUSED_VARIABLE(rstVar);
+        -:  467:        #endif
+        -:  468:        return true;
+        -:  469:    }
+        -:  470:    return false;    
+        -:  471:}
+        -:  472:
+        -:  473://return an atom with value 1 or 0;
+       33:  474:bool boolFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* rstVar, var* varTable)
+        -:  475:{
+        -:  476:    flag f = none;
+       33:  477:    if(isKeyword(tokens, tokenPos, "LESS")){ f = less;}
+       24:  478:    else if(isKeyword(tokens, tokenPos, "GREATER")){ f = greater;}
+       22:  479:    else if(isKeyword(tokens, tokenPos, "EQUAL")){ f = equal;}
+        -:  480:    else{ return false; }
+        -:  481:
+        -:  482:    #ifdef INTERP
+       20:  483:    var tmpVar1 = list(tokens, tokenPos, varTable);
+       20:  484:    _undeclared_check(tokens, tokenPos, tmpVar1);
+       20:  485:    var tmpVar2 = list(tokens, tokenPos, varTable);
+       20:  486:    _undeclared_check(tokens, tokenPos, tmpVar2);
+       20:  487:    if(lisp_isatomic(tmpVar1.data) && lisp_isatomic(tmpVar2.data)){
+       20:  488:        if(f == less && lisp_getval(tmpVar1.data) < lisp_getval(tmpVar2.data)){
+        6:  489:            rstVar->data = lisp_atom(1);
+        -:  490:        }
+       14:  491:        else if(f == greater && lisp_getval(tmpVar1.data) > lisp_getval(tmpVar2.data)){
+        1:  492:            rstVar->data = lisp_atom(1);
+        -:  493:        }
+       13:  494:        else if(f == equal && lisp_getval(tmpVar1.data) == lisp_getval(tmpVar2.data)){
+        6:  495:            rstVar->data = lisp_atom(1);
+        -:  496:        }  
+        -:  497:        else{
+        7:  498:            rstVar->data = lisp_atom(0);
+        -:  499:        }
+        -:  500:        _tmpVar_free(&tmpVar1);
+        -:  501:        _tmpVar_free(&tmpVar2);
+        -:  502:    }
+        -:  503:    else{
+    #####:  504:        on_error("Bool function: needed exe atom !");
+        -:  505:    }
+        -:  506:    #else
+        -:  507:    list(tokens, tokenPos, varTable);
+        -:  508:    list(tokens, tokenPos, varTable);
+        -:  509:    UNUSED_VARIABLE(rstVar);
+        -:  510:    UNUSED_VARIABLE(f);
+        -:  511:    #endif
+        -:  512:    return true;
+        -:  513:}
+        -:  514:
+        -:  515://<IF>  ::= "IF" "(" <BOOLFUNC> ")" "(" <INSTRCTS> "(" <INSTRCTS>
+       15:  516:bool ifFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable)
+        -:  517:{
+       15:  518:    if(isKeyword(tokens, tokenPos, "IF")){ 
+        8:  519:        if(isKeyword(tokens, tokenPos, "(")){
+        -:  520:            var tmpVar;
+        -:  521:            memset (&tmpVar, 0, sizeof(tmpVar));
+        8:  522:            boolFunc(tokens, tokenPos, &tmpVar, varTable);
+        -:  523:            #ifdef INTERP
+        -:  524:            flag f = none;
+        8:  525:            if(lisp_getval(tmpVar.data)){ //get atom value
+        -:  526:                f = iftrue;
+        -:  527:            }
+        -:  528:            #endif
+        -:  529:            _tmpVar_free(&tmpVar);
+        8:  530:            if(isKeyword(tokens, tokenPos, ")")){
+        -:  531:            // if - true part
+        8:  532:                if(isKeyword(tokens, tokenPos, "(")){
+        -:  533:                    #ifdef INTERP
+        8:  534:                    if(f == iftrue){
+        4:  535:                       instrcts(tokens, tokenPos, varTable);
+        -:  536:                    }else{
+        4:  537:                        _skipStatmts(tokens, tokenPos);
+        -:  538:                    }
+        -:  539:                    #else
+        -:  540:                    instrcts(tokens, tokenPos, varTable);
+        -:  541:                    #endif
+        -:  542:            // if - false part
+        8:  543:                    if(isKeyword(tokens, tokenPos, "(")){
+        -:  544:                        #ifdef INTERP
+        8:  545:                        if(f == iftrue){
+        4:  546:                            _skipStatmts(tokens, tokenPos);
+        4:  547:                            return true;
+        -:  548:                        }
+        -:  549:                        #endif
+        4:  550:                        instrcts(tokens, tokenPos, varTable);
+        4:  551:                        return true;
+        -:  552:                    }else{
+    #####:  553:                        fprintf(stderr, "expected an else-branch in an if function\n");
+    #####:  554:                        exit(EXIT_FAILURE);
+        -:  555:                    }
+        -:  556:                }else{
+    #####:  557:                    fprintf(stderr, "expected an if-branch in an if function\n");
+    #####:  558:                    exit(EXIT_FAILURE);
+        -:  559:                }
+        -:  560:            }else{
+    #####:  561:                fprintf(stderr, "expected ')' of an if function\n");
+    #####:  562:                exit(EXIT_FAILURE);
+        -:  563:            }
+        -:  564:        }else{
+    #####:  565:            fprintf(stderr, "expected '(' of an if function\n");
+    #####:  566:            exit(EXIT_FAILURE);
+        -:  567:        }
+        -:  568:    }
+        -:  569:    return false;
+        -:  570:}
+        -:  571:
+        -:  572://<LOOP> ::= "WHILE""(" <BOOLFUNC> ")" "(" <INSTRCTS>
+        9:  573:bool loopFunc(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable, int* link, bool* boolVar)
+        -:  574:{
+        9:  575:    *link = *tokenPos - 1; //back to the start of loop -> the '(' of the loop.
+        9:  576:    if(isKeyword(tokens, tokenPos, "WHILE")){ 
+        9:  577:        if(isKeyword(tokens, tokenPos, "(")){
+        -:  578:            var tmpVar;
+        -:  579:            memset (&tmpVar, 0, sizeof(tmpVar));
+        9:  580:            boolFunc(tokens, tokenPos, &tmpVar, varTable);
+        -:  581:            #ifdef INTERP
+        -:  582:            flag f = none;
+        9:  583:            if(lisp_getval(tmpVar.data)){ //get bool value from an atom.
+        -:  584:                f = iftrue;
+        -:  585:            }
+        -:  586:            #endif
+        -:  587:            _tmpVar_free(&tmpVar);
+        9:  588:            if(isKeyword(tokens, tokenPos, ")")){
+        -:  589:            //loop body
+        9:  590:                if(isKeyword(tokens, tokenPos, "(")){
+        -:  591:                    #ifdef INTERP
+        9:  592:                    if(f == iftrue){
+        6:  593:                       *boolVar = true;
+        6:  594:                        instrcts(tokens, tokenPos, varTable);
+        -:  595:                    }else{
+        3:  596:                        *boolVar = false;
+        3:  597:                        _skipStatmts(tokens, tokenPos);
+        -:  598:                    }
+        -:  599:                    #else
+        -:  600:                    instrcts(tokens, tokenPos, varTable);
+        -:  601:                    UNUSED_VARIABLE(boolVar);
+        -:  602:                    #endif
+        9:  603:                    return true;
+        -:  604:                }else{
+    #####:  605:                    on_error("expected expression in a loop function");
+        -:  606:                }
+        -:  607:            }else{
+    #####:  608:                on_error("expected ')' of a loop function");
+        -:  609:            }
+        -:  610:        }else{
+    #####:  611:            on_error("expected '(' of a loop function");
+        -:  612:        }
+        -:  613:    }
+        -:  614:    return false;
+        -:  615:}
+        -:  616:
+       60:  617:void instrct(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable)
+        -:  618:{
+        -:  619:    var tmpVar;
+        -:  620:    memset (&tmpVar, 0, sizeof(tmpVar));
+       60:  621:    int link = 0;
+       60:  622:    bool boolVar = false;
+        -:  623:
+       60:  624:    if(isKeyword(tokens, tokenPos, "(")){
+       76:  625:        if(setFunc(tokens, tokenPos, varTable) || printFunc(tokens, tokenPos, varTable) ||\
+       29:  626:           retFunc(tokens, tokenPos, &tmpVar, varTable) || ifFunc(tokens, tokenPos, varTable)){
+       53:  627:            if(isKeyword(tokens, tokenPos, ")")){
+        -:  628:                _tmpVar_free(&tmpVar);
+        -:  629:            }else{
+    #####:  630:                on_error("expected ')' of a function");
+        -:  631:            }
+        -:  632:        }
+        7:  633:        else if(loopFunc(tokens, tokenPos, varTable, &link, &boolVar)){
+        7:  634:            if(isKeyword(tokens, tokenPos, ")")){ 
+        7:  635:                if(boolVar == true){
+        5:  636:                *tokenPos = link;
+        -:  637:                }
+        -:  638:                _tmpVar_free(&tmpVar);
+        -:  639:            }else{
+    #####:  640:                on_error("expected ')' of a loop function");
+        -:  641:            }
+        -:  642:        }else{
+    #####:  643:            on_error("expected a function name ?");
+        -:  644:        }
+        -:  645:    }else{
+    #####:  646:        on_error("expected '(' of a function");
+        -:  647:    }  
+       60:  648:}
+        -:  649:
+       18:  650:void instrcts(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable)
+        -:  651:{
+       78:  652:    if(isKeyword(tokens, tokenPos, ")")){
+        -:  653:    }
+        -:  654:    else{
+       60:  655:        instrct(tokens, tokenPos, varTable);
+        -:  656:        instrcts(tokens, tokenPos, varTable);
+        -:  657:    }
+       18:  658:}
+        -:  659:
+        4:  660:void prog(char tokens[MAXTOK][MAXLEN], int* tokenPos, var* varTable)
+        -:  661:{
+        4:  662:    if(isKeyword(tokens, tokenPos, "(")){
+        4:  663:        instrcts(tokens, tokenPos, varTable);
+        -:  664:    }
+        -:  665:    else{
+    #####:  666:        on_error("expected '(' of a program");
+        -:  667:    }
+        4:  668:}
